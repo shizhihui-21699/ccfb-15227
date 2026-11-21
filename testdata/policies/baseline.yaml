@@ -1,0 +1,88 @@
+apiVersion: guard.example.com/v1alpha1
+kind: SecurityPolicy
+metadata:
+  name: baseline-hardening
+spec:
+  description: >-
+    Platform-wide baseline. Workloads must not be privileged, must not touch
+    the host, must not run as root, and must use a runtime default seccomp
+    profile. Images must come from the internal registry.
+  mode: enforce
+  # A policy-evaluation failure denies by default. Cluster availability during a
+  # webhook outage is handled by the webhook configuration, not here.
+  failureMode: closed
+  # 30 days is the platform default; the CI exception below is reviewed quarterly.
+  maxExemptionDuration: 2400h
+  rules:
+    - id: pod.privileged
+      severity: critical
+    - id: pod.allowPrivilegeEscalation
+      action: remediate
+      severity: high
+    - id: pod.capabilities
+      action: remediate
+      severity: high
+      config:
+        allowed: ["NET_BIND_SERVICE"]
+    - id: pod.seccompProfile
+      action: remediate
+      severity: high
+    - id: pod.runAsNonRoot
+      action: remediate
+      severity: high
+    - id: pod.hostPathVolumes
+      severity: critical
+      config:
+        allowedPaths:
+          - /var/log/pods
+    - id: pod.hostNamespaces
+      severity: critical
+    - id: pod.hostUsers
+      severity: high
+    - id: pod.hostPorts
+      action: remediate
+      severity: high
+      config:
+        allowedPorts: []
+    - id: pod.volumeTypes
+      severity: high
+      config:
+        allowed: ["configMap", "secret", "emptyDir", "persistentVolumeClaim", "downwardAPI"]
+    - id: pod.serviceAccountToken
+      action: remediate
+      severity: medium
+    - id: pod.unsafeSysctls
+      severity: high
+    - id: pod.ephemeralContainers
+      severity: high
+    - id: pod.procMount
+      action: remediate
+      severity: high
+    - id: pod.hostProcess
+      severity: critical
+    - id: pod.shareProcessNamespace
+      action: remediate
+      severity: medium
+    - id: image.digestOrPullAlways
+      action: remediate
+      severity: medium
+    - id: image.provenance
+      severity: high
+      config:
+        allowedRegistries:
+          - registry.example.com
+    - id: object.unknownWorkload
+      severity: high
+    - id: object.malformedWorkload
+      severity: high
+  exemptions:
+    # CI runners legitimately need to mount the container runtime socket to
+    # build images. Scoped to one namespace and one rule, expires automatically.
+    - id: ci-build-privileged
+      reason: "CI image builder needs privileged mode to run buildkit"
+      requestedBy: "platform-team"
+      ticket: SEC-1042
+      expiresAt: "2027-01-15T00:00:00Z"
+      scope:
+        namespaces: ["ci-builders"]
+        rules: ["pod.privileged", "pod.hostPathVolumes"]

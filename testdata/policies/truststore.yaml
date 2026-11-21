@@ -1,0 +1,10 @@
+apiVersion: guard.example.com/v1alpha1
+kind: TrustStore
+metadata:
+  name: platform-signatures
+spec:
+  signatures:
+    - image: registry.example.com/platform/api@sha256:1111111111111111111111111111111111111111111111111111111111111111
+      signer: platform-release
+    - image: registry.example.com/vendor/validator:2.3.1
+      signer: vendor-release

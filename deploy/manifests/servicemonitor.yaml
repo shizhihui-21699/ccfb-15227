@@ -1,0 +1,19 @@
+# Optional: requires the Prometheus Operator CRDs.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: admission-guard
+  namespace: admission-guard
+  labels:
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: admission-guard
+  endpoints:
+    - port: https
+      scheme: https
+      path: /metrics
+      interval: 30s
+      tlsConfig:
+        insecureSkipVerify: true

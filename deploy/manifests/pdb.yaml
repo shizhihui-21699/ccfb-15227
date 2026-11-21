@@ -1,0 +1,12 @@
+# With replicas spread across nodes, a disruption budget keeps at least one
+# webhook pod available during voluntary disruptions (node drains, upgrades).
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: admission-guard
+  namespace: admission-guard
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: admission-guard

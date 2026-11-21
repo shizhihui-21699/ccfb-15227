@@ -1,0 +1,104 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: admission-guard
+  namespace: admission-guard
+  labels:
+    app.kubernetes.io/name: admission-guard
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: admission-guard
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: admission-guard
+    spec:
+      serviceAccountName: admission-guard
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      # Spread replicas so a single node failure cannot take every webhook pod
+      # away at once. Both webhook configurations list both replicas through the
+      # Service, so at least one answering pod is enough.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: admission-guard
+      containers:
+        - name: admission-guard
+          image: registry.example.com/platform/admission-guard:1.0.0
+          args:
+            - --listen=:8443
+            - --tls-cert=/etc/guard/tls/tls.crt
+            - --tls-key=/etc/guard/tls/tls.key
+            - --policy-dir=/etc/guard/policies
+            - --audit-log=/var/log/guard/audit.jsonl
+            - --policy-reload-interval=30s
+          ports:
+            - name: https
+              containerPort: 8443
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {memory: 256Mi}
+          livenessProbe:
+            httpGet: {path: /healthz, port: https, scheme: HTTPS}
+            periodSeconds: 10
+          readinessProbe:
+            # Not-ready removes the pod from the Service; the API server then
+            # applies each webhook's failurePolicy. That is the correct way to
+            # express "policy is stale" without stopping the process.
+            httpGet: {path: /readyz, port: https, scheme: HTTPS}
+            periodSeconds: 5
+            failureThreshold: 2
+          volumeMounts:
+            - name: tls
+              mountPath: /etc/guard/tls
+              readOnly: true
+            - name: policies
+              mountPath: /etc/guard/policies
+              readOnly: true
+            - name: audit
+              mountPath: /var/log/guard
+          # Give in-flight admission reviews time to finish so a rollout does
+          # not produce spurious failures.
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "5"]
+      terminationGracePeriodSeconds: 30
+      volumes:
+        - name: tls
+          secret:
+            secretName: admission-guard-tls
+        - name: policies
+          configMap:
+            name: admission-guard-policies
+        - name: audit
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: admission-guard
+  namespace: admission-guard
+spec:
+  selector:
+    app.kubernetes.io/name: admission-guard
+  ports:
+    - name: https
+      port: 443
+      targetPort: https

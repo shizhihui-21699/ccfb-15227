@@ -1,0 +1,36 @@
+apiVersion: guard.example.com/v1alpha1
+kind: SecurityPolicy
+metadata:
+  name: shared-cache-exemption
+spec:
+  description: >-
+    The analytics team runs a licensed validator image that is not mirrored into
+    the internal registry yet. The team-level exemption buys time and expires;
+    after that the image rule applies again without anyone editing this file.
+  mode: enforce
+  maxExemptionDuration: 2400h
+  # This team overlay owns the exemption and needs the platform baseline to
+  # honour it (the baseline, not this file, catches the image).
+  acceptExemptions:
+    - analytics-validator-image
+    - ci-build-privileged
+  rules:
+    - id: image.provenance
+      severity: high
+      config:
+        allowedRegistries:
+          - registry.example.com
+    - id: pod.runAsNonRoot
+      action: remediate
+      severity: high
+  scope:
+    teams: ["analytics"]
+  exemptions:
+    - id: analytics-validator-image
+      reason: "Vendor validator is not mirrored; mirroring tracked in INFRA-88"
+      requestedBy: "analytics-team"
+      ticket: INFRA-88
+      expiresAt: "2027-02-01T00:00:00Z"
+      scope:
+        teams: ["analytics"]
+        rules: ["image.provenance"]

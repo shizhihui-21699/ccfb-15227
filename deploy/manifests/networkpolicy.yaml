@@ -1,0 +1,36 @@
+# The API server must reach the webhook. Restrict ingress to the API server's
+# network (adjust for your provider) and allow metrics scraping only inside the
+# cluster. Egress is limited to the API server and DNS.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: admission-guard
+  namespace: admission-guard
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: admission-guard
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        # Control-plane nodes run the API server; on managed clusters use the
+        # provider's API server source range.
+        - ipBlock:
+            cidr: 10.0.0.0/8
+      ports:
+        - protocol: TCP
+          port: 8443
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 10.0.0.0/8
+      ports:
+        - protocol: TCP
+          port: 443
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53

@@ -1,0 +1,218 @@
+# A benign workload: should be admitted unchanged.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: team-payments
+spec:
+  selector:
+    matchLabels: {app: web}
+  template:
+    metadata:
+      labels: {app: web}
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: web
+          image: registry.example.com/platform/web@sha256:2222222222222222222222222222222222222222222222222222222222222222
+          securityContext:
+            privileged: false
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            readOnlyRootFilesystem: true
+            seccompProfile: {type: RuntimeDefault}
+            capabilities: {drop: ["ALL"]}
+---
+# Privileged + host network + hostPath: denied for a standard team.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: escape-attempt
+  namespace: team-payments
+spec:
+  selector:
+    matchLabels: {app: escape}
+  template:
+    metadata:
+      labels: {app: escape}
+    spec:
+      hostNetwork: true
+      hostPID: true
+      containers:
+        - name: shell
+          image: registry.example.com/platform/tools@sha256:3333333333333333333333333333333333333333333333333333333333333333
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - {name: host, mountPath: /host}
+      volumes:
+        - name: host
+          hostPath: {path: /}
+---
+# Same dangerous pod, but created through a CRD the guard has never heard of.
+# The structural scan must still find and reject it.
+apiVersion: example.com/v1
+kind: TrainingJob
+metadata:
+  name: sneaky
+  namespace: team-payments
+spec:
+  replicas: 1
+  worker:
+    template:
+      spec:
+        hostPID: true
+        containers:
+          - name: trainer
+            image: registry.example.com/ml/trainer@sha256:4444444444444444444444444444444444444444444444444444444444444444
+            securityContext:
+              privileged: true
+---
+# CronJob -> Job -> Pod template nesting. Only the nested template carries the
+# dangerous settings, and the path has a template inside a jobTemplate.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: nightly
+  namespace: team-payments
+spec:
+  schedule: "0 2 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: job
+              image: registry.example.com/platform/job@sha256:5555555555555555555555555555555555555555555555555555555555555555
+              securityContext:
+                privileged: true
+---
+# Remediable violations only: should be rewritten and admitted.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sloppy
+  namespace: team-web
+spec:
+  selector:
+    matchLabels: {app: sloppy}
+  template:
+    metadata:
+      labels: {app: sloppy}
+    spec:
+      containers:
+        - name: app
+          image: registry.example.com/platform/app@sha256:6666666666666666666666666666666666666666666666666666666666666666
+          securityContext:
+            capabilities:
+              add: ["SYS_ADMIN"]
+---
+# Unknown registry: provenance rule denies.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: unknown-image
+  namespace: team-web
+spec:
+  selector:
+    matchLabels: {app: unknown}
+  template:
+    metadata:
+      labels: {app: unknown}
+    spec:
+      containers:
+        - name: app
+          image: docker.io/random/app:latest
+          securityContext:
+            runAsNonRoot: true
+---
+# Namespace owned by the analytics team: the team-scoped, expiring exemption
+# should allow its vendor image despite the provenance deny.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: analytics-validator
+  namespace: team-analytics
+spec:
+  selector:
+    matchLabels: {app: validator}
+  template:
+    metadata:
+      labels: {app: validator}
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: validator
+          image: vendor.example.net/validator:2.3.1
+          securityContext:
+            privileged: false
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            readOnlyRootFilesystem: true
+            seccompProfile: {type: RuntimeDefault}
+---
+# CI namespace: privileged is exempted there, so only the other rules apply.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: image-build
+  namespace: ci-builders
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: buildkit
+          image: registry.example.com/ci/buildkit@sha256:7777777777777777777777777777777777777777777777777777777777777777
+          securityContext:
+            privileged: true
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            readOnlyRootFilesystem: true
+            seccompProfile: {type: RuntimeDefault}
+          volumeMounts:
+            - {name: sock, mountPath: /var/run/docker.sock}
+      volumes:
+        - name: sock
+          hostPath: {path: /var/run/docker.sock}
+---
+# Ephemeral debug container attached to a running pod.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: debugme
+  namespace: team-web
+spec:
+  automountServiceAccountToken: false
+  containers:
+    - name: app
+      image: registry.example.com/platform/app@sha256:8888888888888888888888888888888888888888888888888888888888888888
+      securityContext:
+        runAsNonRoot: true
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        seccompProfile: {type: RuntimeDefault}
+  ephemeralContainers:
+    - name: debugger
+      image: registry.example.com/platform/debug@sha256:9999999999999999999999999999999999999999999999999999999999999999
+      securityContext:
+        privileged: true
+---
+# Malformed: a container without an image must not be silently admitted.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: no-image
+  namespace: team-web
+spec:
+  selector:
+    matchLabels: {app: noimg}
+  template:
+    metadata:
+      labels: {app: noimg}
+    spec:
+      containers:
+        - name: broken
+          securityContext:
+            privileged: false

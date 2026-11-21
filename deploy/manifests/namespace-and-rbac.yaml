@@ -1,0 +1,68 @@
+# The guard's own namespace is exempt from admission review so a broken guard
+# can always be repaired. Bootstrapping a fail-closed admission controller inside
+# the namespaces it protects would otherwise deadlock cluster recovery.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: admission-guard
+  labels:
+    guard.example.com/enforcement: disabled
+    pod-security.kubernetes.io/enforce: restricted
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: admission-guard
+  namespace: admission-guard
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: admission-guard
+rules:
+  # Policy and trust documents.
+  - apiGroups: ["guard.example.com"]
+    resources: ["securitypolicies", "truststores"]
+    verbs: ["get", "list", "watch"]
+  # Namespace labels decide strict/standard and team ownership.
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: admission-guard
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: admission-guard
+subjects:
+  - kind: ServiceAccount
+    name: admission-guard
+    namespace: admission-guard
+---
+# Only cluster administrators may label a namespace enforcement=disabled. The
+# guard's Namespace admission check enforces this at runtime; keeping the label
+# writable only by admins adds defence in depth.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: admission-guard-namespace-labels
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: admission-guard-namespace-labels-admins
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: admission-guard-namespace-labels
+subjects:
+  - kind: Group
+    name: system:masters
+    apiGroup: rbac.authorization.k8s.io

@@ -73,11 +73,12 @@ object cannot exhaust the controller. Objects with an unreadable template, or a
 container with no image, are **denied** rather than skipped.
 
 The webhook configuration intercepts CREATE/UPDATE for all the built-in kinds
-above. For CRDs beyond that list the structural scan only helps if the object is
-actually sent to the webhook: install `--wildcard-resources` mode
-(`webhookconfig.WildcardResources`) if your platform creates workloads through
-custom operators. The trade-off — evaluating every object in the cluster — is
-documented rather than hidden.
+above, plus the `pods/ephemeralcontainers` subresource (so `kubectl debug` cannot
+attach a privileged debug container). For CRDs beyond that list the structural
+scan only helps if the object actually reaches the webhook: pass
+`render-webhook-config --wildcard-resources` if your platform creates workloads
+through custom operators. The trade-off — evaluating every object in the cluster
+— is documented rather than hidden.
 
 ### 3. Availability *and* safety
 
@@ -230,9 +231,9 @@ go test -race ./...
 * The structural scan finds *pod-spec-shaped* maps. An operator that stores a
   pod template under an unusual shape (no `image` in the container entries) will
   not be detected — add its kind to `internal/workload`'s registry.
-* The webhook does not intercept DELETE or subresources. Ephemeral container
-  attachment is intercepted via UPDATE of `pods/ephemeralcontainers` only if
-  that subresource is added to the rules; the default configuration flags any
-  object that already carries ephemeral containers.
+* The webhook does not intercept DELETE. `pods/ephemeralcontainers` is in the
+  default rule set, so debug-container attachment is checked on UPDATE; objects
+  that already carry ephemeral containers are also flagged by
+  `pod.ephemeralContainers`.
 * `--policy-reload-interval` polls files. There is no inotify dependency on
   purpose; a 30s poll is cheaper than a stuck watcher.

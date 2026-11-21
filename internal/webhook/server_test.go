@@ -436,3 +436,63 @@ func getStatus(t *testing.T, url string) int {
 func writeTemp(dir, name, content string) error {
 	return writeFile(dir, name, content)
 }
+
+// TestEphemeralContainersSubresourceDenied covers `kubectl debug`: the request is
+// an UPDATE of pods/ephemeralcontainers whose new object carries the debug
+// container and whose old object does not.
+func TestEphemeralContainersSubresourceDenied(t *testing.T) {
+	ts, _, _, _ := newTestServer(t, nsLabels)
+	base := map[string]any{
+		"apiVersion": "v1", "kind": "Pod",
+		"metadata": map[string]any{"name": "app", "namespace": "team-web"},
+		"spec": map[string]any{
+			"automountServiceAccountToken": false,
+			"containers": []any{map[string]any{
+				"name":  "c",
+				"image": "registry.example.com/platform/app@sha256:" + strings.Repeat("a", 64),
+				"securityContext": map[string]any{
+					"allowPrivilegeEscalation": false,
+					"runAsNonRoot":             true,
+					"readOnlyRootFilesystem":   true,
+					"seccompProfile":           map[string]any{"type": "RuntimeDefault"},
+				},
+			}},
+		},
+	}
+	oldRaw, _ := json.Marshal(base)
+
+	updated := map[string]any{
+		"apiVersion": "v1", "kind": "Pod",
+		"metadata": map[string]any{"name": "app", "namespace": "team-web"},
+		"spec": map[string]any{
+			"automountServiceAccountToken": false,
+			"containers":                   base["spec"].(map[string]any)["containers"],
+			"ephemeralContainers": []any{map[string]any{
+				"name":  "debugger",
+				"image": "registry.example.com/platform/debug@sha256:" + strings.Repeat("b", 64),
+				"securityContext": map[string]any{
+					"privileged": true,
+				},
+			}},
+		},
+	}
+	newRaw, _ := json.Marshal(updated)
+
+	req := admissionv1.AdmissionRequest{
+		Kind:        metav1.GroupVersionKind{Version: "v1", Kind: "Pod"},
+		Resource:    metav1.GroupVersionResource{Version: "v1", Resource: "pods"},
+		SubResource: "ephemeralcontainers",
+		Namespace:   "team-web",
+		Name:        "app",
+		Operation:   admissionv1.Update,
+		Object:      runtime.RawExtension{Raw: newRaw},
+		OldObject:   runtime.RawExtension{Raw: oldRaw},
+	}
+	resp := review(t, ts.URL+"/validate", req)
+	if resp.Allowed {
+		t.Fatal("attaching a privileged debug container must be denied")
+	}
+	if resp.Result == nil || !strings.Contains(resp.Result.Message, "ephemeral") {
+		t.Fatalf("denial should mention the ephemeral container: %+v", resp.Result)
+	}
+}
